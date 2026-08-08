@@ -1,26 +1,35 @@
 #!/bin/bash
-# kley - Adblock toggle for key-farming (Luarmor/Lootlabs)
+# ===============================================================
+# kley - Adblock toggle & blocklist manager for key-farming sites
 # Author: TheCookieGod64
 # License: MIT
-# Version: 1.0.0
+# Version: 1.1.0
+# ===============================================================
 
-KLEY_VERSION="1.0.0"
-HOSTS_FILE="/etc/hosts"
-HOSTS_BACKUP="/etc/hosts.monster"
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/kley"
-STATE_FILE="$STATE_DIR/session"
+set -e
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-RESET='\033[0m'
+# Config
+readonly KLEY_VERSION="1.1.0"
+readonly HOSTS_FILE="/etc/hosts"
+readonly HOSTS_BACKUP="/etc/hosts.monster"
+readonly STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/kley"
+readonly STATE_FILE="$STATE_DIR/session"
+readonly DB_URL="https://raw.githubusercontent.com/TheCookieGod64/kley-db/main/blocklist.txt"
+readonly MARKER_START="# === KLEY BLOCKLIST START ==="
+readonly MARKER_END="# === KLEY BLOCKLIST END ==="
+
+# Colors
+readonly RED='\033[0;31m'
+readonly GREEN='\033[0;32m'
+readonly YELLOW='\033[1;33m'
+readonly BLUE='\033[0;34m'
+readonly CYAN='\033[0;36m'
+readonly BOLD='\033[1m'
+readonly RESET='\033[0m'
 
 _get_hostname() {
     if [ -r /etc/hostname ]; then
-        cat /etc/hostname
+        cat /etc/hostname 2>/dev/null
     elif command -v hostnamectl &> /dev/null; then
         hostnamectl --static 2>/dev/null || echo "localhost"
     else
@@ -28,64 +37,83 @@ _get_hostname() {
     fi
 }
 
+_ensure_state_dir() {
+    [ -d "$STATE_DIR" ] || mkdir -p "$STATE_DIR"
+}
+
+# ===============================================================
+# TOGGLE COMMANDS
+# ===============================================================
+
 cmd_status() {
     if [ -f "$HOSTS_BACKUP" ]; then
         echo -e "${RED}🔓 KLEY MODE: ON${RESET} ${YELLOW}(adblock disabled)${RESET}"
         if [ -f "$STATE_FILE" ]; then
-            local start=$(cat "$STATE_FILE")
-            local now=$(date +%s)
-            local elapsed=$((now - start))
+            local start_time
+            start_time=$(cat "$STATE_FILE" 2>/dev/null || echo "$(date +%s)")
+            local now
+            now=$(date +%s)
+            local elapsed=$((now - start_time))
             local min=$((elapsed / 60))
             local sec=$((elapsed % 60))
             echo -e "${CYAN}⏱  Active for: ${min}m ${sec}s${RESET}"
-            if [ $min -gt 10 ]; then
-                echo -e "${RED}⚠  You've been unprotected for ${min} minutes!${RESET}"
+            if [ "$min" -gt 10 ]; then
+                echo -e "${RED}⚠  You have been unprotected for ${min} minutes!${RESET}"
                 echo -e "${YELLOW}   Turn off with: ${BOLD}kley off${RESET}"
             fi
         fi
     else
-        local lines=$(wc -l < "$HOSTS_FILE" 2>/dev/null || echo "?")
+        local lines
+        lines=$(wc -l < "$HOSTS_FILE" 2>/dev/null || echo "?")
         echo -e "${GREEN}🔒 KLEY MODE: OFF${RESET} ${CYAN}(adblock active - ${lines} rules)${RESET}"
     fi
 }
 
 cmd_on() {
     if [ -f "$HOSTS_BACKUP" ]; then
-        echo -e "${YELLOW}⚠  Kley mode is already on!${RESET}"
+        echo -e "${YELLOW}⚠  Kley mode is already ON!${RESET}"
         cmd_status
         return 1
     fi
-    mkdir -p "$STATE_DIR"
-    echo -e "${BLUE}🔓 Activating kley mode...${RESET}"
+    _ensure_state_dir
+    echo -e "${BLUE}🔓 Activating kley mode (disabling adblock)...${RESET}"
+    
     if ! sudo mv "$HOSTS_FILE" "$HOSTS_BACKUP"; then
-        echo -e "${RED}❌ Failed to move hosts file!${RESET}" >&2
+        echo -e "${RED}❌ Failed to backup hosts file!${RESET}" >&2
         return 1
     fi
-    local hn=$(_get_hostname)
-    sudo tee "$HOSTS_FILE" > /dev/null << HOSTEND
-127.0.0.1	localhost
-::1		localhost
-127.0.1.1	${hn}
-HOSTEND
+
+    local hn
+    hn=$(_get_hostname)
+    
+    {
+        echo "127.0.0.1	localhost"
+        echo "::1		localhost"
+        echo "127.0.1.1	${hn}"
+    } | sudo tee "$HOSTS_FILE" > /dev/null
+
     date +%s > "$STATE_FILE"
     echo -e "${GREEN}✅ Adblock OFF - Go get your key!${RESET}"
-    echo -e "${YELLOW}⚠  Don't forget: ${BOLD}kley off${RESET}${YELLOW} when done${RESET}"
+    echo -e "${YELLOW}⚠  Don't forget: ${BOLD}kley off${RESET}${YELLOW} when done.${RESET}"
 }
 
 cmd_off() {
     if [ ! -f "$HOSTS_BACKUP" ]; then
-        echo -e "${YELLOW}⚠  Kley mode is already off!${RESET}"
+        echo -e "${YELLOW}⚠  Kley mode is already OFF!${RESET}"
         cmd_status
         return 1
     fi
     echo -e "${BLUE}🔒 Restoring adblock...${RESET}"
+    
     if ! sudo mv "$HOSTS_BACKUP" "$HOSTS_FILE"; then
         echo -e "${RED}❌ Failed to restore hosts backup!${RESET}" >&2
         return 1
     fi
+
     rm -f "$STATE_FILE"
-    local lines=$(wc -l < "$HOSTS_FILE")
-    echo -e "${GREEN}✅ Adblock ON (${lines} rules active)${RESET}"
+    local lines
+    lines=$(wc -l < "$HOSTS_FILE" 2>/dev/null || echo "?")
+    echo -e "${GREEN}✅ Adblock back ON (${lines} rules active)${RESET}"
 }
 
 cmd_toggle() {
@@ -96,41 +124,206 @@ cmd_toggle() {
     fi
 }
 
+# ===============================================================
+# DATABASE MANAGEMENT (SMART MERGE & DEDUPLICATION)
+# ===============================================================
+
+cmd_install_db() {
+    local source_url="${1:-$DB_URL}"
+    local db_temp
+    db_temp=$(mktemp /tmp/kley-blocklist.XXXXXX)
+    local existing_temp
+    existing_temp=$(mktemp /tmp/kley-existing.XXXXXX)
+    local new_temp
+    new_temp=$(mktemp /tmp/kley-new.XXXXXX)
+
+    echo -e "${BLUE}📥 Downloading TheCookieGod64's blocklist database...${RESET}"
+    
+    # Support both local files (file:// or raw paths) and remote URLs
+    if [[ "$source_url" == file://* ]]; then
+        local local_path="${source_url#file://}"
+        if [ ! -f "$local_path" ]; then
+            echo -e "${RED}❌ Local database file not found:${RESET} $local_path" >&2
+            rm -f "$db_temp" "$existing_temp" "$new_temp"
+            return 1
+        fi
+        cp "$local_path" "$db_temp"
+    elif [[ -f "$source_url" ]]; then
+        cp "$source_url" "$db_temp"
+    else
+        if ! curl -fsSL "$source_url" -o "$db_temp"; then
+            echo -e "${RED}❌ Failed to download database from:${RESET} $source_url" >&2
+            rm -f "$db_temp" "$existing_temp" "$new_temp"
+            return 1
+        fi
+    fi
+
+    local total
+    total=$(wc -l < "$db_temp")
+    echo -e "${CYAN}📊 Source database contains ${total} blocklist rules.${RESET}"
+    echo ""
+    echo -e "${YELLOW}⚠  This will merge entries into ${HOSTS_FILE}.${RESET}"
+    echo -e "${YELLOW}   Existing domains will NOT be duplicated.${RESET}"
+    read -p "Do you want to proceed? [y/N]: " -n 1 -r || true
+    echo ""
+
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo -e "${YELLOW}Installation cancelled.${RESET}"
+        rm -f "$db_temp" "$existing_temp" "$new_temp"
+        return 0
+    fi
+
+    if [ -f "$HOSTS_BACKUP" ]; then
+        echo -e "${RED}❌ Kley mode is currently active (adblock is OFF).${RESET}"
+        echo -e "${YELLOW}Please run '${BOLD}kley off${RESET}${YELLOW}' first before modifying the database.${RESET}"
+        rm -f "$db_temp" "$existing_temp" "$new_temp"
+        return 1
+    fi
+
+    # Backup hosts file before modifying
+    sudo cp "$HOSTS_FILE" "${HOSTS_FILE}.kley-backup-$(date +%s)"
+
+    # Remove old kley database entries if previously installed
+    if grep -q "$MARKER_START" "$HOSTS_FILE"; then
+        echo -e "${BLUE}🔄 Removing previous kley entries...${RESET}"
+        sudo sed -i "/$MARKER_START/,/$MARKER_END/d" "$HOSTS_FILE"
+    fi
+
+    # Extract existing domains from hosts (excluding comments and empty lines)
+    echo -e "${BLUE}🔍 Checking for duplicate domains...${RESET}"
+    awk '/^[0-9]/ {print $2}' "$HOSTS_FILE" | sort -u > "$existing_temp"
+
+    # Smart merge: filter out any domain in source that already exists
+    awk 'NR==FNR { existing[$1]=1; next } { if ($1 ~ /^[0-9]/ && !existing[$2]) print $1 " " $2 }' \
+        "$existing_temp" "$db_temp" > "$new_temp"
+
+    local new_count
+    new_count=$(wc -l < "$new_temp" 2>/dev/null || echo 0)
+    local skipped=$((total - new_count))
+
+    if [ "$new_count" -eq 0 ]; then
+        echo -e "${YELLOW}⚠  All entries already exist in ${HOSTS_FILE}. Nothing new to add!${RESET}"
+        rm -f "$db_temp" "$existing_temp" "$new_temp"
+        return 0
+    fi
+
+    echo -e "${BLUE}➕ Adding ${new_count} new entries (skipped ${skipped} duplicates)...${RESET}"
+
+    # Append to /etc/hosts with clear markers
+    {
+        echo ""
+        echo "$MARKER_START"
+        echo "# Installed: $(date -u +'%Y-%m-%d %H:%M UTC')"
+        echo "# Source: $source_url"
+        echo "# Total entries: $new_count"
+        cat "$new_temp"
+        echo "$MARKER_END"
+    } | sudo tee -a "$HOSTS_FILE" > /dev/null
+
+    rm -f "$db_temp" "$existing_temp" "$new_temp"
+
+    local total_hosts
+    total_hosts=$(wc -l < "$HOSTS_FILE")
+    echo -e "${GREEN}✅ Successfully installed ${new_count} rules!${RESET}"
+    echo -e "${CYAN}📊 Total /etc/hosts lines: ${total_hosts}${RESET}"
+}
+
+cmd_remove_db() {
+    if ! grep -q "$MARKER_START" "$HOSTS_FILE"; then
+        echo -e "${YELLOW}⚠  No kley database entries found in ${HOSTS_FILE}.${RESET}"
+        return 0
+    fi
+
+    local count
+    count=$(sed -n "/$MARKER_START/,/$MARKER_END/p" "$HOSTS_FILE" | grep -c "^[0-9]" || echo 0)
+
+    echo -e "${YELLOW}⚠  This will remove all ${count} kley entries from ${HOSTS_FILE}.${RESET}"
+    read -p "Continue? [y/N]: " -n 1 -r || true
+    echo ""
+
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo -e "${YELLOW}Cancelled.${RESET}"
+        return 0
+    fi
+
+    sudo cp "$HOSTS_FILE" "${HOSTS_FILE}.kley-pre-remove"
+    sudo sed -i "/$MARKER_START/,/$MARKER_END/d" "$HOSTS_FILE"
+    echo -e "${GREEN}✅ Successfully removed ${count} kley rules!${RESET}"
+    echo -e "${CYAN}📊 Remaining /etc/hosts lines: $(wc -l < "$HOSTS_FILE")${RESET}"
+}
+
+cmd_db_info() {
+    if ! grep -q "$MARKER_START" "$HOSTS_FILE"; then
+        echo -e "${YELLOW}⚠  Kley database is NOT installed in ${HOSTS_FILE}.${RESET}"
+        echo -e "Install with: ${BLUE}kley install-db${RESET}"
+        return 0
+    fi
+
+    local count
+    count=$(sed -n "/$MARKER_START/,/$MARKER_END/p" "$HOSTS_FILE" | grep -c "^[0-9]" || echo 0)
+    local install_date
+    install_date=$(grep -A2 "$MARKER_START" "$HOSTS_FILE" | grep "Installed:" | sed 's/# Installed: //' || echo "Unknown")
+    local source_info
+    source_info=$(grep -A3 "$MARKER_START" "$HOSTS_FILE" | grep "Source:" | sed 's/# Source: //' || echo "Unknown")
+    local total_hosts
+    total_hosts=$(wc -l < "$HOSTS_FILE")
+
+    echo -e "${BOLD}${BLUE}📊 KLEY Database Info${RESET}"
+    echo -e "${CYAN}Installed on:${RESET}  ${install_date}"
+    echo -e "${CYAN}Source:${RESET}        ${source_info}"
+    echo -e "${CYAN}Kley rules:${RESET}    ${count}"
+    echo -e "${CYAN}Total /etc/hosts:${RESET} ${total_hosts}"
+}
+
+# ===============================================================
+# HELP & DISPATCHER
+# ===============================================================
+
 cmd_help() {
-    echo -e "${BOLD}${BLUE}🔑 KLEY${RESET} - Adblock Toggle for Key Farming"
-    echo -e "${CYAN}Version ${KLEY_VERSION}${RESET}"
+    echo -e "${BOLD}${BLUE}🔑 KLEY${RESET} - Adblock toggle & hosts manager for key-farming"
+    echo -e "${CYAN}Version ${KLEY_VERSION} by TheCookieGod64${RESET}"
     echo ""
     echo -e "${BOLD}${YELLOW}USAGE:${RESET}"
     echo "    kley <command>"
     echo ""
-    echo -e "${BOLD}${YELLOW}COMMANDS:${RESET}"
-    echo -e "    ${GREEN}on${RESET}, start          Disable adblock (to get key)"
-    echo -e "    ${GREEN}off${RESET}, stop          Enable adblock (safe)"
-    echo -e "    ${GREEN}status${RESET}, check      Show current status"
-    echo -e "    ${GREEN}toggle${RESET}, t          Toggle on/off"
-    echo -e "    ${GREEN}version${RESET}, -v        Show version"
-    echo -e "    ${GREEN}help${RESET}, -h           Show this help"
+    echo -e "${BOLD}${YELLOW}ADBLOCK TOGGLE:${RESET}"
+    echo -e "    ${GREEN}on${RESET}, start         Disable adblock (to get keys safely)"
+    echo -e "    ${GREEN}off${RESET}, stop        Restore adblock"
+    echo -e "    ${GREEN}toggle${RESET}, t, toggly Toggle between on/off"
+    echo -e "    ${GREEN}status${RESET}, check     Show current adblock status"
+    echo ""
+    echo -e "${BOLD}${YELLOW}DATABASE COMMANDS:${RESET}"
+    echo -e "    ${GREEN}install-db${RESET} [url]  Download and smart-merge TheCookieGod64's blocklist"
+    echo -e "    ${GREEN}update-db${RESET}         Update the blocklist to latest version"
+    echo -e "    ${GREEN}remove-db${RESET}         Remove only kley's entries from /etc/hosts"
+    echo -e "    ${GREEN}db-info${RESET}           Show stats on installed blocklist entries"
+    echo ""
+    echo -e "${BOLD}${YELLOW}GENERAL:${RESET}"
+    echo -e "    ${GREEN}version${RESET}, -v       Show version"
+    echo -e "    ${GREEN}help${RESET}, -h          Show this help"
     echo ""
     echo -e "${BOLD}${YELLOW}EXAMPLES:${RESET}"
-    echo "    kley on           # Disable adblock"
-    echo "    kley              # Show status"
-    echo "    kley toggle       # Toggle status"
-    echo "    kley off          # Enable adblock"
-    echo ""
-    echo -e "${BOLD}${YELLOW}AUTHOR:${RESET}"
-    echo "    TheCookieGod64"
+    echo "    kley on                # Disable adblock temporarily"
+    echo "    kley off               # Re-enable full adblock protection"
+    echo "    kley toggle            # Switch state with one command"
+    echo "    kley install-db        # Smart-merge community blocklist"
+    echo "    kley db-info           # Check installed database info"
 }
 
 case "${1:-status}" in
-    on|start)             cmd_on ;;
-    off|stop)             cmd_off ;;
-    status|check|"")      cmd_status ;;
-    toggle|t|toggly)      cmd_toggle ;;
-    version|-v|--version) echo "kley v${KLEY_VERSION}" ;;
-    help|-h|--help)       cmd_help ;;
+    on|start|aan|onn)                    cmd_on ;;
+    off|stop|uit|oof)                    cmd_off ;;
+    status|check|stauts|"")              cmd_status ;;
+    toggle|t|toggly|togly|toggel)        cmd_toggle ;;
+    install-db|installdb)                shift; cmd_install_db "$@" ;;
+    update-db|updatedb)                  shift; cmd_install_db "$@" ;;
+    remove-db|removedb)                  cmd_remove_db ;;
+    db-info|dbinfo|info)                 cmd_db_info ;;
+    version|-v|--version)                echo "kley v${KLEY_VERSION}" ;;
+    help|-h|--help|halp)                 cmd_help ;;
     *)
         echo -e "${RED}❌ Unknown command: $1${RESET}" >&2
-        echo -e "Type ${BLUE}kley help${RESET} for usage" >&2
+        echo -e "Type ${BLUE}kley help${RESET} for usage." >&2
         exit 1
         ;;
 esac

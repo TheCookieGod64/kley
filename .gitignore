@@ -1,0 +1,5 @@
+kley-db/
+*.swp
+*.log
+session
+.keymode_state
