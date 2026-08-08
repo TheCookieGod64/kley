@@ -1,0 +1,136 @@
+#!/bin/bash
+# kley - Adblock toggle for key-farming (Luarmor/Lootlabs)
+# Author: TheCookieGod64
+# License: MIT
+# Version: 1.0.0
+
+KLEY_VERSION="1.0.0"
+HOSTS_FILE="/etc/hosts"
+HOSTS_BACKUP="/etc/hosts.monster"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/kley"
+STATE_FILE="$STATE_DIR/session"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+RESET='\033[0m'
+
+_get_hostname() {
+    if [ -r /etc/hostname ]; then
+        cat /etc/hostname
+    elif command -v hostnamectl &> /dev/null; then
+        hostnamectl --static 2>/dev/null || echo "localhost"
+    else
+        echo "localhost"
+    fi
+}
+
+cmd_status() {
+    if [ -f "$HOSTS_BACKUP" ]; then
+        echo -e "${RED}🔓 KLEY MODE: ON${RESET} ${YELLOW}(adblock disabled)${RESET}"
+        if [ -f "$STATE_FILE" ]; then
+            local start=$(cat "$STATE_FILE")
+            local now=$(date +%s)
+            local elapsed=$((now - start))
+            local min=$((elapsed / 60))
+            local sec=$((elapsed % 60))
+            echo -e "${CYAN}⏱  Active for: ${min}m ${sec}s${RESET}"
+            if [ $min -gt 10 ]; then
+                echo -e "${RED}⚠  You've been unprotected for ${min} minutes!${RESET}"
+                echo -e "${YELLOW}   Turn off with: ${BOLD}kley off${RESET}"
+            fi
+        fi
+    else
+        local lines=$(wc -l < "$HOSTS_FILE" 2>/dev/null || echo "?")
+        echo -e "${GREEN}🔒 KLEY MODE: OFF${RESET} ${CYAN}(adblock active - ${lines} rules)${RESET}"
+    fi
+}
+
+cmd_on() {
+    if [ -f "$HOSTS_BACKUP" ]; then
+        echo -e "${YELLOW}⚠  Kley mode is already on!${RESET}"
+        cmd_status
+        return 1
+    fi
+    mkdir -p "$STATE_DIR"
+    echo -e "${BLUE}🔓 Activating kley mode...${RESET}"
+    if ! sudo mv "$HOSTS_FILE" "$HOSTS_BACKUP"; then
+        echo -e "${RED}❌ Failed to move hosts file!${RESET}" >&2
+        return 1
+    fi
+    local hn=$(_get_hostname)
+    sudo tee "$HOSTS_FILE" > /dev/null << HOSTEND
+127.0.0.1	localhost
+::1		localhost
+127.0.1.1	${hn}
+HOSTEND
+    date +%s > "$STATE_FILE"
+    echo -e "${GREEN}✅ Adblock OFF - Go get your key!${RESET}"
+    echo -e "${YELLOW}⚠  Don't forget: ${BOLD}kley off${RESET}${YELLOW} when done${RESET}"
+}
+
+cmd_off() {
+    if [ ! -f "$HOSTS_BACKUP" ]; then
+        echo -e "${YELLOW}⚠  Kley mode is already off!${RESET}"
+        cmd_status
+        return 1
+    fi
+    echo -e "${BLUE}🔒 Restoring adblock...${RESET}"
+    if ! sudo mv "$HOSTS_BACKUP" "$HOSTS_FILE"; then
+        echo -e "${RED}❌ Failed to restore hosts backup!${RESET}" >&2
+        return 1
+    fi
+    rm -f "$STATE_FILE"
+    local lines=$(wc -l < "$HOSTS_FILE")
+    echo -e "${GREEN}✅ Adblock ON (${lines} rules active)${RESET}"
+}
+
+cmd_toggle() {
+    if [ -f "$HOSTS_BACKUP" ]; then
+        cmd_off
+    else
+        cmd_on
+    fi
+}
+
+cmd_help() {
+    echo -e "${BOLD}${BLUE}🔑 KLEY${RESET} - Adblock Toggle for Key Farming"
+    echo -e "${CYAN}Version ${KLEY_VERSION}${RESET}"
+    echo ""
+    echo -e "${BOLD}${YELLOW}USAGE:${RESET}"
+    echo "    kley <command>"
+    echo ""
+    echo -e "${BOLD}${YELLOW}COMMANDS:${RESET}"
+    echo -e "    ${GREEN}on${RESET}, start          Disable adblock (to get key)"
+    echo -e "    ${GREEN}off${RESET}, stop          Enable adblock (safe)"
+    echo -e "    ${GREEN}status${RESET}, check      Show current status"
+    echo -e "    ${GREEN}toggle${RESET}, t          Toggle on/off"
+    echo -e "    ${GREEN}version${RESET}, -v        Show version"
+    echo -e "    ${GREEN}help${RESET}, -h           Show this help"
+    echo ""
+    echo -e "${BOLD}${YELLOW}EXAMPLES:${RESET}"
+    echo "    kley on           # Disable adblock"
+    echo "    kley              # Show status"
+    echo "    kley toggle       # Toggle status"
+    echo "    kley off          # Enable adblock"
+    echo ""
+    echo -e "${BOLD}${YELLOW}AUTHOR:${RESET}"
+    echo "    TheCookieGod64"
+}
+
+case "${1:-status}" in
+    on|start)             cmd_on ;;
+    off|stop)             cmd_off ;;
+    status|check|"")      cmd_status ;;
+    toggle|t|toggly)      cmd_toggle ;;
+    version|-v|--version) echo "kley v${KLEY_VERSION}" ;;
+    help|-h|--help)       cmd_help ;;
+    *)
+        echo -e "${RED}❌ Unknown command: $1${RESET}" >&2
+        echo -e "Type ${BLUE}kley help${RESET} for usage" >&2
+        exit 1
+        ;;
+esac
