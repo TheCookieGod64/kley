@@ -1,0 +1,23 @@
+# Binary
+kley
+*.o
+*.out
+*.so
+*.a
+
+# Build
+build/
+dist/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# State (don't commit local kley state)
+*.pid
