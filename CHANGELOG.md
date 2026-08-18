@@ -5,6 +5,18 @@ All notable changes to **kley** are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)  
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
+## [2.0.2] - 2026-08-18
+
+### Changed
+- Makefile: added `TARGET`, parallel build `MAKEFLAGS += -j$(nproc)`, `debug` target with `-g -O0`
+- Improved super modular build (13 files) — no functional change
+
+## [2.0.1] - 2026-08-18
+
+### Changed
+- Refactor: split monolithic `kley.c` into super modular structure (`include/kley.h` + 13 src files)
+- No functional change, pure maintainability
+
 ## [2.0.0] - 2026-08-18
 
 ### Changed — MAJOR REWRITE
@@ -56,6 +68,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Session tracking with elapsed time
 - Multi-language aliases
 
+[2.0.2]: https://github.com/TheCookieGod64/kley/compare/v2.0.1...v2.0.2
+[2.0.1]: https://github.com/TheCookieGod64/kley/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/TheCookieGod64/kley/compare/v1.2.0...v2.0.0
 [1.2.0]: https://github.com/TheCookieGod64/kley/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/TheCookieGod64/kley/compare/v1.0.0...v1.1.0
