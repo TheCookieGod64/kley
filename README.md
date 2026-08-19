@@ -37,7 +37,6 @@ git remote set-url origin git@github.com:TheCookieGod64/kley.git
 ## v2.0.3 Patches
 
 - Internal cleanups  
-- Minor stability fixes  
 - Micro-optimizations in module layout  
 - No breaking changes — commands remain fully compatible
 
