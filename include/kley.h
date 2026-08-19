@@ -13,7 +13,7 @@
 #include <signal.h>
 #include <ctype.h>
 
-#define KLEY_VERSION "2.0.2"
+#define KLEY_VERSION "2.0.3"
 #define HOSTS_FILE "/etc/hosts"
 #define HOSTS_BACKUP "/etc/hosts.monster"
 #define MARKER_START "# === KLEY BLOCKLIST START ==="

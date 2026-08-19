@@ -4,7 +4,10 @@ int cmd_install_db(int argc, char **argv){
     const char *url = argc>0 ? argv[0] : DB_URL;
     char tmp1[]="/tmp/kley-blocklist.XXXXXX", tmp2[]="/tmp/kley-existing.XXXXXX", tmp3[]="/tmp/kley-new.XXXXXX";
     int fd1=mkstemp(tmp1), fd2=mkstemp(tmp2), fd3=mkstemp(tmp3); close(fd1); close(fd2); close(fd3);
-    printf(BLUE "📥 Downloading TheCookieGod64's blocklist database..." RESET "\n");
+    if (argc==0 || strcmp(url, DB_URL)==0)
+        printf(BLUE "📥 Downloading TheCookieGod64's blocklist database..." RESET "\n");
+    else
+        printf(BLUE "📥 Downloading blocklist from %s..." RESET "\n", url);
     char cmd[1024];
     if(strncmp(url,"file://",7)==0) snprintf(cmd,sizeof(cmd),"cp '%s' '%s'", url+7, tmp1);
     else if(access(url,F_OK)==0) snprintf(cmd,sizeof(cmd),"cp '%s' '%s'", url, tmp1);
